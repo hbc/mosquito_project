@@ -407,4 +407,6 @@ MAG_merged = merge(albimanus_MAG_24_de, a_to_g, by.x=0,
 MAG_merged = merge(MAG_merged, gambiae_MAG_24_de, by.x="gambiae_id",
   by.y=0)
 ggplot(MAG_merged, aes(x=logFC.x, y=logFC.y)) + geom_point() + geom_smooth(method="lm")
+write.table(MAG_merged, file="MAG_overlap_24.tsv", sep="\t", quote=FALSE,
+ col.names=TRUE)
 ```
