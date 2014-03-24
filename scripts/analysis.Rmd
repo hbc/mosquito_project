@@ -20,12 +20,12 @@ yourself; it should be on Basecamp.
 ```{r setup-paths, cache=TRUE}
 wd = "/Users/rory/cache/mosquito_project/scripts"
 setwd(wd)
-metadata_file = "/Users/rory/hsph/hsph/projects/fc_anopheles_rnaseq/data/samples.csv"
-albimanus_summary_file = "/Users/rory/hsph/hsph/projects/fc_anopheles_rnaseq/albimanus/final/2014-03-13_albimanus/project-summary.csv"
-gambiae_summary_file = "/Users/rory/hsph/hsph/projects/fc_anopheles_rnaseq/gambiae/final/2014-03-14_gambiae/project-summary.csv"
-albimanus_counts = "/Users/rory/hsph/hsph/projects/fc_anopheles_rnaseq/albimanus/final/2014-03-13_albimanus/combined.counts"
-gambiae_counts = "/Users/rory/hsph/hsph/projects/fc_anopheles_rnaseq/gambiae/final/2014-03-14_gambiae/combined.counts"
-albimanus_to_gambiae = "/Users/rory/cache/mosquito_project/data/albimanus_to_gambiae.tsv"
+metadata_file = "../data/samples.csv"
+albimanus_summary_file = "../data/albimanus/project-summary.csv"
+gambiae_summary_file = "../data/gambiae/project-summary.csv"
+albimanus_counts = "../data/albimanus/combined.counts"
+gambiae_counts = "../data/gambiae/combined.counts"
+albimanus_to_gambiae = "..//data/albimanus_to_gambiae.tsv"
 
 # colorblind palette
 cbPalette <- c("#999999", "#E69F00", "#56B4E9", "#009E73", "#F0E442",
