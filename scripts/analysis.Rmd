@@ -1,0 +1,410 @@
+```{r setup, echo=FALSE}
+opts_chunk$set(tidy=TRUE, highlight=TRUE, fig.align='left', fig.show='hold',
+               cache=FALSE, highlight=TRUE, autodep=TRUE, warning=FALSE, error=FALSE,
+               message=FALSE, prompt=TRUE, comment='', fig.cap='', fig.width=8,
+               fix.height=11)
+```
+
+# Overview
+This project is looking at several tissue types from two species of mosquitos
+in a mated and virginal condition. They want to know what is different between
+the mosquitos in the various tissue types as well as across mating condition.
+
+You need to look up what comparisons they are most interested in to refresh
+yourself; it should be on Basecamp.
+
+
+
+# Setup
+
+```{r setup-paths, cache=TRUE}
+wd = "/Users/rory/cache/mosquito_project/scripts"
+setwd(wd)
+metadata_file = "/Users/rory/hsph/hsph/projects/fc_anopheles_rnaseq/data/samples.csv"
+albimanus_summary_file = "/Users/rory/hsph/hsph/projects/fc_anopheles_rnaseq/albimanus/final/2014-03-13_albimanus/project-summary.csv"
+gambiae_summary_file = "/Users/rory/hsph/hsph/projects/fc_anopheles_rnaseq/gambiae/final/2014-03-14_gambiae/project-summary.csv"
+albimanus_counts = "/Users/rory/hsph/hsph/projects/fc_anopheles_rnaseq/albimanus/final/2014-03-13_albimanus/combined.counts"
+gambiae_counts = "/Users/rory/hsph/hsph/projects/fc_anopheles_rnaseq/gambiae/final/2014-03-14_gambiae/combined.counts"
+albimanus_to_gambiae = "/Users/rory/cache/mosquito_project/data/albimanus_to_gambiae.tsv"
+
+# colorblind palette
+cbPalette <- c("#999999", "#E69F00", "#56B4E9", "#009E73", "#F0E442",
+"#0072B2", "#D55E00", "#CC79A7")
+cbHeatmap = c("#ffffb2", "#fecc5c", "#fd8d3c", "#f03b20", "#bd0026")
+cbHeatmap = c("#feedde", "#fdd0a2", "#fdae6b", "#fd8d3c", "#f16913",
+   "#d94801", "#8c2d04")
+```
+
+```{r load-libraries}
+library(CHBUtils)
+library(ggplot2)
+library(reshape)
+library(limma)
+library(edgeR)
+library(extrafont)
+```
+
+Load in the metadat about the samples and the summary of the alignment and
+other QC data about the samples and merge them together.
+```{r load-data}
+metadata = read.csv(metadata_file, header=TRUE, colClasses="factor")
+albimanus_summarydata = read.csv(albimanus_summary_file, header=TRUE)
+gambiae_summarydata = read.csv(gambiae_summary_file, header=TRUE)
+summarydata = rbind(albimanus_summarydata, gambiae_summarydata)
+samples = merge(metadata, summarydata, by.x="samplename", by.y="Name")
+a_to_g = read.table(albimanus_to_gambiae, header=TRUE, sep="\t")
+colnames(a_to_g) = c("albimanus_id", "gambiae_id", "percent_identity")
+```
+
+# Quality exploration of Albimanus data
+There are 11,994 annotated genes in the Anopheles GTF file from vectorbase and
+about 13,000 genes for the Gambiae GTF file. We can detect most of the transcripts
+in the samples:
+
+```{r tissue-type-detection}
+ggplot(samples, aes(x=description, y=Transcripts.Detected, fill=tissue)) +
+    geom_bar(stat="identity") +
+    theme(axis.text.x = element_text(angle = 90)) + scale_fill_manual(values=cbPalette) +
+    theme(text=element_text(family="Gill Sans MT")) +
+    ylab("transcripts detected")
+```
+
+Almost all of the transcripts that are annotated can be detected 
+
+```{r mapped}
+ggplot(samples, aes(x=description, y=Mapped, fill=tissue)) +
+    geom_bar(stat="identity") +
+    theme(axis.text.x = element_text(angle = 90)) + scale_fill_manual(values=cbPalette) +
+    theme(text=element_text(family="Gill Sans MT"))
+```
+
+This isn't because some of the libraries are very small, there is a huge difference in
+mapping rate across the samples:
+
+```{r mapping-rate}
+ggplot(samples, aes(x=description, y=Mapping.Rate, fill=tissue)) +
+    geom_bar(stat="identity") +
+    theme(axis.text.x = element_text(angle = 90)) + scale_fill_manual(values=cbPalette) +
+    theme(text=element_text(family="Gill Sans MT"))
+```
+
+Looking at some more features of the reads mapping, it looks like most reads aren't
+mapping to genes, it is a little surprising that it is that high, but it also shows
+that this data set might be able to be used to do a nicer annotation of the mosquito
+genome, it might be missing a lot of genes:
+    
+```{r intragenic-rate}
+ggplot(samples, aes(x=description, y=1-Intergenic.Rate, fill=tissue)) +
+    geom_bar(stat="identity") +
+    theme(axis.text.x = element_text(angle = 90)) + scale_fill_manual(values=cbPalette) +
+    theme(text=element_text(family="Gill Sans MT")) +
+    ylab("intragenic rate")
+```
+
+In general it looks like the annotation for the Gambiae genome is better, as we can
+find more reads mapping to genes:
+
+```{r intragenic-rate-faceted}
+ggplot(samples, aes(x=description, y=1-Intergenic.Rate, fill=tissue)) +
+    geom_bar(stat="identity") +
+    theme(axis.text.x = element_text(angle = 90)) + scale_fill_manual(values=cbPalette) +
+    facet_wrap(~ species, scale="free_x") +
+    theme(text=element_text(family="Gill Sans MT")) +
+    ylab("intragenic rate")
+```
+
+## Minor trouble spots
+Here is a list of the samples that have some spots of poor sequencing:
+atrium_mated_albi_female_24h_B body_virgin_albi_female_24h_B,
+head_virgin_albi_female_3h_C, body_mated_albi_female_24h_C. But none of them
+look very drastic, I think all of these lanes will be usable. Here is an example
+of what the poor sequencing looks like for the worst lane:
+
+![](images/albimanus/sequencing_issue.png)
+
+Resulting in ability to call bases at some points across the run:
+
+![](images/albimanus/n_issue.png)
+
+This is likely due to there being some issue on the lane itself, maybe a section of
+the lane was not flowed correctly; sometimes you can see quality drops like this due to
+over-clustering as well, a sequencing facility would have some better insight regarding
+what was wrong. It does not soak up very many reads though, so I do not think we
+have to worry about it very much.
+
+
+# Counts
+Load in the counts from the Albimanus and Gambiae samples and make sure the
+samples dataframe and the columns of the counts are in the same order, to make
+it easier to work with the data.
+    
+```{r load-counts}
+albimanus = read.table(albimanus_counts, header=TRUE, row.names="id")
+albimanus_samples = droplevels(subset(samples, species == "albi"))
+albimanus_samples = albimanus_samples[with(albimanus_samples, order(samplename)),]
+albimanus = albimanus[, sort(colnames(albimanus))]
+gambiae = read.table(gambiae_counts, header=TRUE, row.names="id")
+gambiae_samples = droplevels(subset(samples, species == "gamb"))
+gambiae_samples = gambiae_samples[with(gambiae_samples, order(samplename)),]
+gambiae = gambiae[, sort(colnames(gambiae))]
+```
+
+We should expect that the samples from the same tissue type are correlated with
+each other:
+```{r correlations}
+library(gplots)
+heatmap.2(cor(albimanus), trace="none", col=colorRampPalette(cbHeatmap)(100),
+  cexRow=0.5, cexCol=0.5)
+heatmap.2(cor(gambiae), trace="none", col=colorRampPalette(cbHeatmap)(100),
+  cexRow=0.5, cexCol=0.5)
+```
+
+We can also see from those plots if we squint that the mated/virgin samples are also
+clustered together, so that is a really good sign.
+
+```{r boxplot-raw}
+melted = melt(albimanus)
+colnames(melted) = c("sample", "count")
+melted$count = log(melted$count)
+ggplot(melted, aes(x=sample, y=count)) + geom_boxplot() +
+  theme(axis.text.x = element_text(angle = 90, hjust = 1)) + ggtitle("albimanus")
+melted = melt(gambiae)
+colnames(melted) = c("sample", "count")
+melted$count = log(melted$count)
+ggplot(melted, aes(x=sample, y=count)) + geom_boxplot() +
+  theme(axis.text.x = element_text(angle = 90, hjust = 1)) + ggtitle("gambiae")
+```
+
+The raw count data will need some normalization. The en-vogue method right now is to
+use the trimmed mean of M-values (TMM) normalization, which normalizes the overall counts
+using non-extreme values of the counts.
+
+```{r boxplot-normalized}
+y = DGEList(counts=albimanus)
+y = calcNormFactors(y)
+normalized_counts = cpm(y, normalized.lib.sizes=TRUE)
+melted = melt(normalized_counts)
+colnames(melted) = c("gene", "sample", "count")
+melted$count = log(melted$count)
+ggplot(melted, aes(x=sample, y=count)) + geom_boxplot() +
+  theme(axis.text.x = element_text(angle = 90, hjust = 1)) + ggtitle("albimanus")
+albimanus_samples = droplevels(subset(samples, species == "albi"))
+normalized_counts = normalized_counts[, sort(colnames(normalized_counts))]
+mds(normalized_counts, albimanus_samples$tissue)
+mds(normalized_counts, albimanus_samples$mated)
+
+y = DGEList(counts=gambiae)
+y = calcNormFactors(y)
+normalized_counts = cpm(y, normalized.lib.sizes=TRUE)
+melted = melt(normalized_counts)
+colnames(melted) = c("gene", "sample", "count")
+melted$count = log(melted$count)
+ggplot(melted, aes(x=sample, y=count)) + geom_boxplot() +
+  theme(axis.text.x = element_text(angle = 90, hjust = 1)) + ggtitle("gambiae")
+gambiae_samples = droplevels(subset(samples, species == "gamb"))
+normalized_counts = normalized_counts[, sort(colnames(normalized_counts))]
+mds(normalized_counts, gambiae_samples$tissue)
+mds(normalized_counts, gambiae_samples$mated)
+mds(normalized_counts, gambiae_samples$hours)
+```
+
+The normalization fixes a lot of the deviation between samples, which is great.
+The distance between the samples looks excellent as well. 
+
+
+# Albimanus analysis
+Here are the broad differences across MAG and the atrium in Albimanus:
+
+```{r limma-albimanus-tissue}
+design = model.matrix(~ 0 + tissue, data=albimanus_samples)
+colnames(design) = levels(albimanus_samples$tissue)
+y = DGEList(counts=albimanus)
+y = calcNormFactors(y)
+v = voom(y, design, plot=TRUE)
+fit = lmFit(v, design)
+cm = makeContrasts(tissue = atrium - MAG, levels=design)
+fit2 = contrasts.fit(fit, cm)
+fit2 = eBayes(fit2)
+```
+
+There are `r dim(topTable(fit2, n=Inf,p.value=0.05, coef="tissue"))[1]` genes
+different between the MAG and atrium. It is not surprising we see so many genes that
+are different since these are two different tissues.
+
+If we wanted to look at, controlling for tissue, the differences between
+MAG and atrium samples which have been mated:
+
+```{r limma-albimanus-mated-time}
+albimanus_samples$tissue_mated_time = factor(paste(albimanus_samples$tissue, albimanus_samples$mated, albimanus_samples$hours_post_mating, sep="_"))
+design = model.matrix(~ 0 + tissue_mated_time, data=albimanus_samples)
+colnames(design) = c("atrium_mated_24", "atrium_virgin_24", "MAG_mated_24", "MAG_virgin_24")
+y = DGEList(counts=albimanus)
+y = calcNormFactors(y)
+v = voom(y, design, plot=TRUE)
+fit = lmFit(v, design)
+cm = makeContrasts(atrium_24 = atrium_mated_24 - atrium_virgin_24,
+                   MAG_24 = MAG_mated_24 - MAG_virgin_24, levels=design)
+fit2 = contrasts.fit(fit, cm)
+fit2 = eBayes(fit2)
+albimanus_atrium = topTable(fit2, n=Inf, p.value=1, coef="atrium_24")
+albimanus_MAG = topTable(fit2, n=Inf, p.value=1, coef="MAG_24")
+```
+
+There are `r dim(subset(albimanus_atrium, adj.P.Val < 0.05))[1]` genes
+different in the atrium between the mated and virgin samples 24 hours post mating.
+There are `r dim(subset(albimanus_MAG, adj.P.Val < 0.05))[1]` genes
+different in the MAG between the mated and virgin samples, 24 hours post mating.
+
+```{r write-albimanus}
+write.table(albimanus_atrium, file="albimanus_atrium_24.tsv", sep="\t", quote=FALSE,
+ col.names=TRUE)
+write.table(albimanus_MAG, file="albimanus_MAG_24.tsv", sep="\t", quote=FALSE,
+ col.names=TRUE)
+```
+
+# Gambiae analysis
+
+This analysis is done in a similar manner to he albimanus data above. Here are the
+contrats that Sara and Evi want to look at:
+   
+```
+Great news!
+So for initial comparisons I think you are already doing this.  Mated vs Virgin directly at each time point and each species. So: 
+Gamb.three.MvsV.ATRIUM= Mated.three - Virgin.three
+Gamb.twentyfour.MvsV.ATRIUM = Mated.twentyfour - Virgin.twentyfour
+Albi.twentyfour.MvsV.ATRIUM = Mated.twentyfour - Virgin.twentyfour
+
+Gamb.three.MvsV.MAGs= Mated.three - Virgin.three
+Gamb.twentyfour.MvsV.MAGs = Mated.twentyfour - Virgin.twentyfour
+Albi.twentyfour.MvsV.MAGs = Mated.twentyfour - Virgin.twentyfour
+
+though not sure you have the 3hr timepoint for the MAGs...maybe just 24 for now.
+
+```
+
+Here is the limma code to look at these contrasts:
+    
+
+```{r limma-gambiae-mated}
+gambiae_samples$tissue_mated_time = factor(paste(gambiae_samples$tissue, gambiae_samples$mated,
+  gambiae_samples$hours_post_mating, sep="_"))
+design = model.matrix(~ 0 + tissue_mated_time, data=gambiae_samples)
+colnames(design) = c("atrium_mated_24", "atrium_mated_3", "atrium_virgin_24",
+  "atrium_virgin_3", "body_mated_24", "body_mated_3", "body_virgin_24",
+  "body_virgin_3", "head_mated_24", "head_mated_3", "head_virgin_24",
+  "head_virgin_3", "MAG_mated_24", "MAG_virgin_24")
+y = DGEList(counts=gambiae)
+y = calcNormFactors(y)
+v = voom(y, design, plot=TRUE)
+fit = lmFit(v, design)
+cm = makeContrasts(atrium_mated_24 = atrium_mated_24 - atrium_virgin_24,
+                   atrium_mated_3 = atrium_mated_3 - atrium_virgin_3,
+                   body_mated_24 = body_mated_24 - body_virgin_24,
+                   body_mated_3 = body_mated_3 - body_virgin_3,
+                   head_mated_24 = head_mated_24 - head_virgin_24,
+                   head_mated_3 = head_mated_3 - head_virgin_3,
+                   MAG_mated_24 = MAG_mated_24 - MAG_virgin_24, levels=design)
+fit2 = contrasts.fit(fit, cm)
+fit2 = eBayes(fit2)
+gambiae_atrium_24 = topTable(fit2, n=Inf, p.value=1, coef="atrium_mated_24")
+gambiae_atrium_3 = topTable(fit2, n=Inf, p.value=1, coef="atrium_mated_3")
+gambiae_body_24 = topTable(fit2, n=Inf, p.value=1, coef="body_mated_24")
+gambiae_body_3 = topTable(fit2, n=Inf, p.value=1, coef="body_mated_3")
+gambiae_head_24 = topTable(fit2, n=Inf, p.value=1, coef="head_mated_24")
+gambiae_head_3 = topTable(fit2, n=Inf, p.value=1, coef="head_mated_3")
+gambiae_MAG_24 = topTable(fit2, n=Inf, p.value=1, coef="MAG_mated_24")
+```
+
+There are `r dim(subset(gambiae_atrium_3, adj.P.Val < 0.05))[1]` genes
+different in the atrium between the mated and virgin samples, 3 hours
+post mating. 
+There are `r dim(subset(gambiae_atrium_24, adj.P.Val < 0.05))[1]` genes
+different in the atrium between the mated and virgin samples, 24 hours
+post mating.
+There are `r dim(subset(gambiae_MAG_24, adj.P.Val < 0.05))[1]` genes
+different in the MAG between the mated and virgin samples, 24 hours
+post mating.
+There are `r dim(subset(gambiae_body_3, adj.P.Val < 0.05))[1]` genes
+different in the body between the mated and virgin samples, 3 hours
+post mating. 
+There are `r dim(subset(gambiae_body_24, adj.P.Val < 0.05))[1]` genes
+different in the body between the mated and virgin samples, 24 hours
+post mating.
+There are `r dim(subset(gambiae_head_3, adj.P.Val < 0.05))[1]` genes
+different in the head between the mated and virgin samples, 3 hours
+post mating. 
+There are `r dim(subset(gambiae_head_24, adj.P.Val < 0.05))[1]` genes
+different in the head between the mated and virgin samples, 24 hours
+post mating.
+
+```{r write-gambiae}
+write.table(gambiae_atrium_24, file="gambiae_atrium_24.tsv", sep="\t", quote=FALSE,
+ col.names=TRUE)
+write.table(gambiae_atrium_3, file="gambiae_atrium_3.tsv", sep="\t", quote=FALSE,
+ col.names=TRUE)
+write.table(gambiae_MAG_24, file="gambiae_MAG_24.tsv", sep="\t", quote=FALSE,
+ col.names=TRUE)
+write.table(gambiae_body_3, file="gambiae_body_3.tsv", sep="\t", quote=FALSE,
+ col.names=TRUE)
+write.table(gambiae_body_24, file="gambiae_body_24.tsv", sep="\t", quote=FALSE,
+ col.names=TRUE)
+write.table(gambiae_head_3, file="gambiae_head_3.tsv", sep="\t", quote=FALSE,
+ col.names=TRUE)
+write.table(gambiae_head_24, file="gambiae_head_24.tsv", sep="\t", quote=FALSE,
+ col.names=TRUE)
+```
+
+As a bonus, let's look if there is some overlap between the genes affected by
+mating status across timepoints in the same tissu. That is a good check, we would
+expect for some genes to be stably differentially expressed:
+    
+```{r overlap}
+atrium_24_genes = rownames(subset(gambiae_atrium_24, adj.P.Val < 0.05))
+atrium_3_genes = rownames(subset(gambiae_atrium_3, adj.P.Val < 0.05))
+total = union(atrium_3_genes, atrium_24_genes)
+x = cbind(total %in% atrium_24_genes, total %in% atrium_3_genes)
+vennDiagram(vennCounts(x), names = c("3 h", "24 h"), main="Atrium")
+
+body_24_genes = rownames(subset(gambiae_body_24, adj.P.Val < 0.05))
+body_3_genes = rownames(subset(gambiae_body_3, adj.P.Val < 0.05))
+total = union(body_3_genes, body_24_genes)
+x = cbind(total %in% body_24_genes, total %in% body_3_genes)
+vennDiagram(vennCounts(x), names = c("3 h", "24 h"), main="Body")
+
+head_24_genes = rownames(subset(gambiae_head_24, adj.P.Val < 0.05))
+head_3_genes = rownames(subset(gambiae_head_3, adj.P.Val < 0.05))
+total = union(head_3_genes, head_24_genes)
+x = cbind(total %in% head_24_genes, total %in% head_3_genes)
+vennDiagram(vennCounts(x), names = c("3 h", "24 h"), main="Head")
+```
+
+In the atrium it seems like the genes differentially expressed at 24 hours are
+almost a superset of the genes differentially expressed at 3 hours.
+
+# Atrium and MAG differences between the Albimanus and Gambiae
+Looking at the genes flagged at differentially expressed in the atrium
+with mating status in the Albimanus and Gambiae samples shows a weak
+correlation:
+```{r species-comparison-atrium}
+gambiae_atrium_24_de = subset(gambiae_atrium_24, adj.P.Val < 0.05)
+albimanus_atrium_24_de = subset(albimanus_atrium, adj.P.Val < 0.05)
+atrium_merged = merge(albimanus_atrium_24_de, a_to_g, by.x=0,
+  by.y="albimanus_id")
+atrium_merged = merge(atrium_merged, gambiae_atrium_24_de, by.x="gambiae_id",
+  by.y=0)
+ggplot(atrium_merged, aes(x=logFC.x, y=logFC.y)) + geom_point() + geom_smooth(method="lm")
+write.table(atrium_merged, file="atrium_overlap_24.tsv", sep="\t", quote=FALSE,
+ col.names=TRUE)
+```
+
+The MAG shows a similarly weak relationship:
+
+```{r species-comparison-MAG}
+gambiae_MAG_24_de = subset(gambiae_atrium_24, adj.P.Val < 0.05)
+albimanus_MAG_24_de = subset(albimanus_MAG, adj.P.Val < 0.05)
+MAG_merged = merge(albimanus_MAG_24_de, a_to_g, by.x=0,
+  by.y="albimanus_id")
+MAG_merged = merge(MAG_merged, gambiae_MAG_24_de, by.x="gambiae_id",
+  by.y=0)
+ggplot(MAG_merged, aes(x=logFC.x, y=logFC.y)) + geom_point() + geom_smooth(method="lm")
+```
