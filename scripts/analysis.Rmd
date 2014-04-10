@@ -400,7 +400,7 @@ write.table(atrium_merged, file="atrium_overlap_24.tsv", sep="\t", quote=FALSE,
 The MAG shows a similarly weak relationship:
 
 ```{r species-comparison-MAG}
-gambiae_MAG_24_de = subset(gambiae_atrium_24, adj.P.Val < 0.05)
+gambiae_MAG_24_de = subset(gambiae_MAG_24, adj.P.Val < 0.05)
 albimanus_MAG_24_de = subset(albimanus_MAG, adj.P.Val < 0.05)
 MAG_merged = merge(albimanus_MAG_24_de, a_to_g, by.x=0,
   by.y="albimanus_id")
